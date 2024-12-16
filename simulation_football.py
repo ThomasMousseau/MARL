@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import torch.nn as nn
+import torch.optim as optim
 
 from vmas.simulator.scenario import BaseScenario
 from typing import Union
@@ -7,6 +9,44 @@ import time
 import torch
 from vmas import make_env
 from vmas.simulator.core import Agent
+
+class PolicyNetwork(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(PolicyNetwork, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(input_size, 128),
+            nn.ReLU(),
+            nn.Linear(128, output_size)
+        )
+
+    def forward(self, x):
+        return self.fc(x)
+
+def train_policy(env, policy, optimizer, num_episodes, gamma=0.99):
+    for episode in range(num_episodes):
+        obs = env.reset()
+        done = False
+        episode_rewards = []
+        while not done:
+            obs_tensor = torch.tensor(obs, dtype=torch.float32)
+            action_probs = policy(obs_tensor)
+            action = torch.multinomial(action_probs, 1).item()
+            next_obs, reward, done, _ = env.step(action)
+            episode_rewards.append(reward)
+            obs = next_obs
+
+        # Compute discounted rewards and update policy
+        discounted_rewards = []
+        cumulative_reward = 0
+        for reward in reversed(episode_rewards):
+            cumulative_reward = reward + gamma * cumulative_reward
+            discounted_rewards.insert(0, cumulative_reward)
+
+        discounted_rewards = torch.tensor(discounted_rewards, dtype=torch.float32)
+        optimizer.zero_grad()
+        loss = -torch.sum(torch.log(action_probs) * discounted_rewards)
+        loss.backward()
+        optimizer.step()
 
 def _get_deterministic_action(agent: Agent, continuous: bool, env):
     if continuous:
@@ -19,6 +59,17 @@ def _get_deterministic_action(agent: Agent, continuous: bool, env):
         )
     return action.clone()
 
+def _get_custom_action(agent, env, policy=None):
+    if policy is not None:
+        obs = torch.tensor(agent.obs, dtype=torch.float32)
+        action_probs = policy(obs)
+        action = torch.multinomial(action_probs, 1).item()
+        return action
+    else:
+        # Replace this with your own agent's policy
+        # For example, a simple random policy:
+        return env.get_random_action(agent)
+
 def use_vmas_env(
     render: bool,
     num_envs: int,
@@ -27,6 +78,7 @@ def use_vmas_env(
     scenario: Union[str, BaseScenario],
     continuous_actions: bool,
     random_action: bool,
+    policy: nn.Module = None,
     **kwargs
 ):
     """Example function to use a vmas environment.
@@ -37,8 +89,7 @@ def use_vmas_env(
         continuous_actions (bool): Whether the agents have continuous or discrete actions
         scenario (str): Name of scenario
         device (str): Torch device to use
-        render (bool): Whether to render the scenario
-        num_envs (int): Number of vectorized environments
+        render (bool): Whether to render the scenario\num_envs (int): Number of vectorized environments
         n_steps (int): Number of steps before returning done
         random_action (bool): Use random actions or have all agents perform the down action
 
@@ -66,7 +117,9 @@ def use_vmas_env(
 
         actions = []
         for i, agent in enumerate(env.agents):
-            if not random_action:
+            if policy is not None:
+                action = _get_custom_action(agent, env, policy)
+            elif not random_action:
                 action = _get_deterministic_action(agent, continuous_actions, env)
             else:
                 action = env.get_random_action(agent)
@@ -100,6 +153,24 @@ def use_vmas_env(
 
 if __name__ == "__main__":
     scenario_name="football"
+    env = make_env(
+        scenario=scenario_name,
+        num_envs=1,
+        device="cpu",
+        continuous_actions=False,
+        seed=0,
+        ai_red_agents=False,
+        ai_blue_agents=False,
+        n_blue_agents=2,
+        n_red_agents=2,
+        max_speed=0.5,
+        ball_max_speed=1.0
+    )
+
+    policy = PolicyNetwork(input_size=env.observation_space.shape[0], output_size=env.action_space.n)
+    optimizer = optim.Adam(policy.parameters(), lr=0.01)
+    train_policy(env, policy, optimizer, num_episodes=1000)
+
     use_vmas_env(
         scenario=scenario_name,
         render=True,
@@ -108,13 +179,13 @@ if __name__ == "__main__":
         device="cpu",
         continuous_actions=False,
         random_action=False,
-        # Environment specific variables
-        ai_red_agents=True,
+        policy=policy,
+        ai_red_agents=False,
         ai_blue_agents=False,
-        n_blue_agents=1,
-        n_red_agents=1,
+        n_blue_agents=2,
+        n_red_agents=2,
         max_speed=0.5,
         ball_max_speed=1.0
     )
-    
-    
+
+

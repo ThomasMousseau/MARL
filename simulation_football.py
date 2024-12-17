@@ -1,7 +1,5 @@
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-import torch.nn as nn
-import torch.optim as optim
 
 from vmas.simulator.scenario import BaseScenario
 from typing import Union
@@ -9,6 +7,8 @@ import time
 import torch
 from vmas import make_env
 from vmas.simulator.core import Agent
+
+from torch import nn
 
 class PolicyNetwork(nn.Module):
     def __init__(self, input_size, output_size):
@@ -42,6 +42,7 @@ def train_policy(env, policy, optimizer, num_episodes, gamma=0.99):
             cumulative_reward = reward + gamma * cumulative_reward
             discounted_rewards.insert(0, cumulative_reward)
 
+        #* REINFORCE algorithm 
         discounted_rewards = torch.tensor(discounted_rewards, dtype=torch.float32)
         optimizer.zero_grad()
         loss = -torch.sum(torch.log(action_probs) * discounted_rewards)
@@ -59,16 +60,10 @@ def _get_deterministic_action(agent: Agent, continuous: bool, env):
         )
     return action.clone()
 
-def _get_custom_action(agent, env, policy=None):
-    if policy is not None:
-        obs = torch.tensor(agent.obs, dtype=torch.float32)
-        action_probs = policy(obs)
-        action = torch.multinomial(action_probs, 1).item()
-        return action
-    else:
-        # Replace this with your own agent's policy
-        # For example, a simple random policy:
-        return env.get_random_action(agent)
+def _get_custom_action(agent, env):
+    # Replace this with your own agent's policy
+    # For example, a simple random policy:
+    return env.get_random_action(agent)
 
 def use_vmas_env(
     render: bool,
@@ -78,7 +73,6 @@ def use_vmas_env(
     scenario: Union[str, BaseScenario],
     continuous_actions: bool,
     random_action: bool,
-    policy: nn.Module = None,
     **kwargs
 ):
     """Example function to use a vmas environment.
@@ -117,10 +111,9 @@ def use_vmas_env(
 
         actions = []
         for i, agent in enumerate(env.agents):
-            if policy is not None:
-                action = _get_custom_action(agent, env, policy)
-            elif not random_action:
-                action = _get_deterministic_action(agent, continuous_actions, env)
+            if not random_action:
+                action = _get_custom_action(agent, env)
+                #action = _get_deterministic_action(agent, continuous_actions, env)
             else:
                 action = env.get_random_action(agent)
 
@@ -152,34 +145,16 @@ def use_vmas_env(
     
 
 if __name__ == "__main__":
-    scenario_name="football"
-    env = make_env(
-        scenario=scenario_name,
-        num_envs=1,
-        device="cpu",
-        continuous_actions=False,
-        seed=0,
-        ai_red_agents=False,
-        ai_blue_agents=False,
-        n_blue_agents=2,
-        n_red_agents=2,
-        max_speed=0.5,
-        ball_max_speed=1.0
-    )
-
-    policy = PolicyNetwork(input_size=env.observation_space.shape[0], output_size=env.action_space.n)
-    optimizer = optim.Adam(policy.parameters(), lr=0.01)
-    train_policy(env, policy, optimizer, num_episodes=1000)
-
+    scenario_name = "football"
     use_vmas_env(
         scenario=scenario_name,
         render=True,
         num_envs=32,
-        n_steps=100,
+        n_steps=1000,
         device="cpu",
         continuous_actions=False,
         random_action=False,
-        policy=policy,
+        # Environment specific variables
         ai_red_agents=False,
         ai_blue_agents=False,
         n_blue_agents=2,
